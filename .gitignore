@@ -35,3 +35,6 @@ mvnw
 mvnw.cmd
 suppliers/.DS_Store
 suppliers/smartwecode/.DS_Store
+**/generatedInvoices/**
+
+**/invoice controller.xlsx
