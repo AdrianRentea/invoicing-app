@@ -1,5 +1,6 @@
 package com.smartwecode.generateinvoice.service;
 
+import com.aspose.cells.PdfSaveOptions;
 import com.smartwecode.generateinvoice.dto.Company;
 import com.smartwecode.generateinvoice.dto.Customer;
 import com.smartwecode.generateinvoice.dto.Supplier;
@@ -98,12 +99,27 @@ public class GenerateInvoiceService {
     private void saveInvoice(String companyName, Customer customer, Workbook wb) throws IOException {
         String filePath = getInvoicePathAndName(companyName, customer.getName());
         createDirectoriesInPathIfNotExists(getInvoicePath(companyName));
-        FileOutputStream outputStream = new FileOutputStream(filePath);
+        FileOutputStream outputStream = new FileOutputStream(filePath + ".xlsx");
         wb.setForceFormulaRecalculation(true);
         wb.write(outputStream);
-        wb.close();
-        System.out.println("invoice generated in " + filePath);
 
+        wb.close();
+
+        saveInvoiceAsPDF(filePath);
+
+
+    }
+
+    private void saveInvoiceAsPDF(String filePath){
+        try {
+            com.aspose.cells.Workbook workbook = new com.aspose.cells.Workbook(filePath + ".xlsx");
+            PdfSaveOptions options = new PdfSaveOptions();
+            options.setOnePagePerSheet(true);
+            options.setCalculateFormula(true);
+            workbook.save(filePath+".pdf", options);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void removeLastRowFromCompanyInvoiceController() {
@@ -112,12 +128,12 @@ public class GenerateInvoiceService {
     }
 
     private Boolean invoiceAlreadyGenerated(String companyName, String customerName) {
-        return Files.exists(Paths.get(getInvoicePathAndName(companyName, customerName)));
+        return Files.exists(Paths.get(getInvoicePathAndName(companyName, customerName)+ ".xlsx"));
     }
 
     private String getInvoicePathAndName(String companyName, String customerName) {
 
-        String fileName = "invoice_" + customerName + ".xlsx";
+        String fileName = "invoice_" + customerName;
         return getInvoicePath(companyName) + fileName;
     }
 
