@@ -4,6 +4,7 @@ import com.aspose.cells.PdfSaveOptions;
 import com.smartwecode.generateinvoice.dto.Company;
 import com.smartwecode.generateinvoice.dto.Customer;
 import com.smartwecode.generateinvoice.dto.Supplier;
+import com.smartwecode.generateinvoice.utils.TrackExecutionTime;
 import com.smartwecode.generateinvoice.utils.excel.ExcelSheetDescriptor;
 import com.smartwecode.generateinvoice.utils.excel.ExcelUtils;
 import lombok.SneakyThrows;
@@ -26,7 +27,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -37,39 +38,69 @@ public class GenerateInvoiceService {
     private String invoiceTemplatePath;
     @Value("${invoiceControllerFileName}")
     private String invoiceControllerFileName;
-    private List<Company> dataSet;
+
     private Workbook companyInvoiceController;
 
     private Boolean shouldUpdateInvoiceController = false;
 
     @SneakyThrows
+    @TrackExecutionTime
     public void generateInvoices() {
 
-        this.loadDataSet();
-        for (Company company : dataSet) {
-            loadInvoiceControllerForCompany(company.getName());
-            generateCompanyInvoices(company);
-            saveInvoiceControllerForCompany(company.getName());
-        }
+        final List<Company> supplierList = this.getSupplierList();
+
+        supplierList
+                .stream()
+                .map(company -> {
+                    loadInvoiceControllerForCompany(company.getName());
+                    generateCompanyInvoices(company);
+                    saveInvoiceControllerForCompany(company.getName());
+                    return null;
+                })
+                .filter(Objects::nonNull).collect(Collectors.toUnmodifiableList());
     }
 
-    private void loadDataSet() throws IOException, InstantiationException, IllegalAccessException {
-        dataSet = new ArrayList<>();
-        List<String> directoryList = listDirectories(directoryPath);
-        for (String company : directoryList) {
-            List<String> companyFiles = listFilesUsingDirectoryStream(directoryPath + company + "/");
-            dataSet.add(
-                    new Company(
-                            company,
-                            loadSupplier(
-                                    directoryPath + company + "/" + filterSuppliers(companyFiles).get(0)
-                            ),
-                            filterCustomers(companyFiles).stream().map(customer -> loadCustomer(directoryPath + company + "/" + customer)).collect(Collectors.toList()))
-            );
-        }
+    @SneakyThrows
+    private List<Company> getSupplierList() {
+        return getSupplierListFromFilePath(directoryPath)
+                .stream()
+                .map(
+                        companyName -> {
+                            try {
+                                return addToSupplierList(companyName);
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            } catch (InstantiationException e) {
+                                e.printStackTrace();
+                            } catch (IllegalAccessException e) {
+                                e.printStackTrace();
+                            }
+                            return null;
+                        }
+                ).filter(Objects::nonNull).collect(Collectors.toUnmodifiableList());
+    }
+
+    private Company addToSupplierList(String companyName) throws IOException, InstantiationException, IllegalAccessException {
+        final List<String> companyFiles = listFilesUsingDirectoryStream(directoryPath + companyName + "/");
+        return
+                new Company(
+                        companyName,
+                        loadSupplier(
+                                directoryPath
+                                        + companyName + "/"
+                                        + companyFiles.stream()
+                                        .filter(s -> s.contains("supplier"))
+                                        .collect(Collectors.toList()).get(0)
+                        ),
+                        companyFiles.stream()
+                                .filter(s -> s.contains("customer"))
+                                .map(customer -> loadCustomer(directoryPath + companyName + "/" + customer))
+                                .collect(Collectors.toList()));
+
     }
 
     private void generateCompanyInvoices(Company companyData) {
+
         for (Customer customer : companyData.getCustomerList()) {
             generateInvoiceForCompanyCustomer(companyData.getName(), companyData.getSupplier(), customer);
         }
@@ -102,21 +133,20 @@ public class GenerateInvoiceService {
         FileOutputStream outputStream = new FileOutputStream(filePath + ".xlsx");
         wb.setForceFormulaRecalculation(true);
         wb.write(outputStream);
-
         wb.close();
-
+        System.out.println("invoice " + filePath + ".xlsx" + " was saved on disk!");
         saveInvoiceAsPDF(filePath);
-
-
     }
 
-    private void saveInvoiceAsPDF(String filePath){
+    private void saveInvoiceAsPDF(String filePath) {
         try {
             com.aspose.cells.Workbook workbook = new com.aspose.cells.Workbook(filePath + ".xlsx");
             PdfSaveOptions options = new PdfSaveOptions();
             options.setOnePagePerSheet(true);
             options.setCalculateFormula(true);
-            workbook.save(filePath+".pdf", options);
+            workbook.save(filePath + ".pdf", options);
+            System.out.println("invoice " + filePath + ".pdf" + " was saved on disk!");
+
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -128,7 +158,7 @@ public class GenerateInvoiceService {
     }
 
     private Boolean invoiceAlreadyGenerated(String companyName, String customerName) {
-        return Files.exists(Paths.get(getInvoicePathAndName(companyName, customerName)+ ".xlsx"));
+        return Files.exists(Paths.get(getInvoicePathAndName(companyName, customerName) + ".xlsx"));
     }
 
     private String getInvoicePathAndName(String companyName, String customerName) {
@@ -156,7 +186,7 @@ public class GenerateInvoiceService {
         return fileList;
     }
 
-    private List<String> listDirectories(String dir) throws IOException {
+    private List<String> getSupplierListFromFilePath(String dir) throws IOException {
         List<String> directoriesList = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(dir))) {
             for (Path path : stream) {
@@ -167,22 +197,6 @@ public class GenerateInvoiceService {
             }
         }
         return directoriesList;
-    }
-
-    private List<String> filterSuppliers(List<String> list) {
-        Pattern pattern = Pattern.compile("supplier");
-        return filterListByPattern(pattern, list);
-    }
-
-    private List<String> filterCustomers(List<String> list) {
-        Pattern pattern = Pattern.compile("customer");
-        return filterListByPattern(pattern, list);
-    }
-
-    private List<String> filterListByPattern(Pattern pattern, List<String> list) {
-        return list.stream()
-                .filter(pattern.asPredicate())
-                .collect(Collectors.toList());
     }
 
     public Supplier loadSupplier(String path) throws IOException, InstantiationException, IllegalAccessException {
@@ -242,7 +256,7 @@ public class GenerateInvoiceService {
     private void saveInvoiceControllerForCompany(String companyName) {
 
         if (shouldUpdateInvoiceController) {
-            FileOutputStream outputStream = new FileOutputStream(directoryPath + companyName + "/" + invoiceControllerFileName);
+            final FileOutputStream outputStream = new FileOutputStream(directoryPath + companyName + "/" + invoiceControllerFileName);
             companyInvoiceController.setForceFormulaRecalculation(true);
             companyInvoiceController.write(outputStream);
             companyInvoiceController.close();
@@ -252,7 +266,7 @@ public class GenerateInvoiceService {
     }
 
     private String getNextCompanyInvoiceSerialAndNumber() {
-        LocalDate currentDate = LocalDate.now();
+        final LocalDate currentDate = LocalDate.now();
         Sheet sheet = companyInvoiceController.getSheetAt(0);
         String currentYear2Digits = String.valueOf((currentDate.getYear() % 100));
 
@@ -281,7 +295,7 @@ public class GenerateInvoiceService {
     }
 
     private void createDirectoriesInPathIfNotExists(String path) {
-        File pathAsFile = new File(path);
+        final File pathAsFile = new File(path);
         if (!Files.exists(Paths.get(path))) {
             pathAsFile.mkdirs();
         }
