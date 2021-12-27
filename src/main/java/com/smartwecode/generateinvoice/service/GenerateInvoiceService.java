@@ -106,6 +106,7 @@ public class GenerateInvoiceService {
         wb.write(outputStream);
 
         wb.close();
+        System.out.println("invoice " + filePath + ".xlsx" + " was saved on disk!");
 
         saveInvoiceAsPDF(filePath);
 
@@ -119,6 +120,7 @@ public class GenerateInvoiceService {
             options.setOnePagePerSheet(true);
             options.setCalculateFormula(true);
             workbook.save(filePath+".pdf", options);
+            System.out.println("invoice " + filePath + ".pdf" + " was saved on disk!");
         } catch (Exception e) {
             e.printStackTrace();
         }
