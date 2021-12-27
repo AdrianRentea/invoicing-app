@@ -4,6 +4,7 @@ import com.aspose.cells.PdfSaveOptions;
 import com.smartwecode.generateinvoice.dto.Company;
 import com.smartwecode.generateinvoice.dto.Customer;
 import com.smartwecode.generateinvoice.dto.Supplier;
+import com.smartwecode.generateinvoice.utils.TrackExecutionTime;
 import com.smartwecode.generateinvoice.utils.excel.ExcelSheetDescriptor;
 import com.smartwecode.generateinvoice.utils.excel.ExcelUtils;
 import lombok.SneakyThrows;
@@ -43,6 +44,7 @@ public class GenerateInvoiceService {
     private Boolean shouldUpdateInvoiceController = false;
 
     @SneakyThrows
+    @TrackExecutionTime
     public void generateInvoices() {
 
         this.loadDataSet();
