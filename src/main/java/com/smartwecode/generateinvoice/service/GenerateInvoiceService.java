@@ -25,9 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,20 +37,17 @@ public class GenerateInvoiceService {
     @Value("${invoiceControllerFileName}")
     private String invoiceControllerFileName;
 
-    private Workbook currentSupplierInvoiceController;
+    private Map<String, Workbook> currentSupplierInvoiceController = new HashMap<>();
 
-    private Boolean shouldUpdateInvoiceController = false;
+    private Map<String, Boolean> shouldUpdateInvoiceController = new HashMap<>();
 
     @SneakyThrows
     @TrackExecutionTime
     public void generateInvoices() {
 
-        getSupplierList().stream()
+        getSupplierList().parallelStream()
                 .map(company -> {
-                    // load the invoice controller once for each supplier, no matter the number of customers
-                    loadInvoiceControllerForTheCurrentSupplier(company.getName());
                     generateCompanyInvoices(company);
-                    saveInvoiceControllerForCompany(company.getName());
                     return null;
                 })
                 .filter(Objects::nonNull).collect(Collectors.toUnmodifiableList());
@@ -102,30 +97,42 @@ public class GenerateInvoiceService {
 
     private void generateCompanyInvoices(Company companyData) {
 
+        shouldUpdateInvoiceController.put(companyData.getName(), false);
+
         for (Customer customer : companyData.getCustomerList()) {
             generateInvoiceForCompanyCustomer(companyData.getName(), companyData.getSupplier(), customer);
         }
+
+        saveInvoiceControllerForCompany(companyData.getName());
+        // just a bit a memory management,
+        // remove the supplier controller from the memory after it's invoices are generated
+        currentSupplierInvoiceController.remove(companyData.getName());
     }
 
     private void generateInvoiceForCompanyCustomer(String companyName, Supplier supplier, Customer customer) {
         if (!invoiceAlreadyGenerated(companyName, customer.getName())) {
+
+            // load the invoice controller once for each supplier, no matter the number of customers
+            loadInvoiceControllerForTheCurrentSupplier(companyName);
+
             try {
-                Workbook wb = updateInvoice(supplier, customer);
+                Workbook wb = updateInvoice(companyName, supplier, customer);
                 saveInvoice(companyName, customer, wb);
+
             } catch (IOException e) {
                 // if the invoice generation failed, we need to remove
                 // the unsaved invoice serial and number from the supplierInvoiceController
-                removeLastRowFromCurrentSupplierInvoiceController();
+                removeLastRowFromCurrentSupplierInvoiceController(companyName);
             }
         }
     }
 
-    private Workbook updateInvoice(Supplier supplier, Customer customer) throws IOException {
+    private Workbook updateInvoice(String companyName, Supplier supplier, Customer customer) throws IOException {
         Workbook wb = getSheetFromInvoiceTemplate(invoiceTemplatePath);
         Sheet sheet = wb.getSheetAt(0);
         updateSupplier(sheet, supplier);
         updateCustomer(sheet, customer);
-        updateInvoiceSeriesAndNumber(sheet, getNextCompanyInvoiceSerialAndNumber());
+        updateInvoiceSeriesAndNumber(sheet, getNextCompanyInvoiceSerialAndNumber(companyName));
         updateInvoiceDate(sheet);
         return wb;
     }
@@ -156,10 +163,10 @@ public class GenerateInvoiceService {
     }
 
     /*
-    * This method will be called if saving the invoices failed
-    * */
-    private void removeLastRowFromCurrentSupplierInvoiceController() {
-        Sheet invoiceControllerSheet = currentSupplierInvoiceController.getSheetAt(0);
+     * This method will be called if saving the invoices failed
+     * */
+    private void removeLastRowFromCurrentSupplierInvoiceController(String companyName) {
+        Sheet invoiceControllerSheet = currentSupplierInvoiceController.get(companyName).getSheetAt(0);
         invoiceControllerSheet.removeRow(invoiceControllerSheet.getRow(getLastIndexWithNotEmptyData(invoiceControllerSheet)));
     }
 
@@ -255,25 +262,26 @@ public class GenerateInvoiceService {
 
     @SneakyThrows
     private void loadInvoiceControllerForTheCurrentSupplier(String companyName) {
-        currentSupplierInvoiceController = getSheetFromInvoiceTemplate(directoryPath + companyName + "/" + invoiceControllerFileName);
+        currentSupplierInvoiceController.putIfAbsent(companyName, getSheetFromInvoiceTemplate(directoryPath + companyName + "/" + invoiceControllerFileName));
     }
 
     @SneakyThrows
     private void saveInvoiceControllerForCompany(String companyName) {
 
-        if (shouldUpdateInvoiceController) {
+        if (shouldUpdateInvoiceController.get(companyName)) {
             final FileOutputStream outputStream = new FileOutputStream(directoryPath + companyName + "/" + invoiceControllerFileName);
-            currentSupplierInvoiceController.setForceFormulaRecalculation(true);
-            currentSupplierInvoiceController.write(outputStream);
-            currentSupplierInvoiceController.close();
+            Workbook workbook = currentSupplierInvoiceController.get(companyName);
+            workbook.setForceFormulaRecalculation(true);
+            workbook.write(outputStream);
+            workbook.close();
             System.out.println("invoice controller updated for " + companyName);
-            shouldUpdateInvoiceController = false;
+            shouldUpdateInvoiceController.replace(companyName, false);
         }
     }
 
-    private String getNextCompanyInvoiceSerialAndNumber() {
+    private String getNextCompanyInvoiceSerialAndNumber(String companyName) {
         final LocalDate currentDate = LocalDate.now();
-        Sheet sheet = currentSupplierInvoiceController.getSheetAt(0);
+        Sheet sheet = currentSupplierInvoiceController.get(companyName).getSheetAt(0);
         String currentYear2Digits = String.valueOf((currentDate.getYear() % 100));
 
         int rowIndex = getLastIndexWithNotEmptyData(sheet);
@@ -284,7 +292,7 @@ public class GenerateInvoiceService {
         sheet.getRow(rowIndex).createCell(1).setCellValue(currentYear2Digits);
         sheet.getRow(rowIndex).createCell(2).setCellValue(++number);
         sheet.getRow(rowIndex).createCell(3).setCellValue(currentDate.getDayOfMonth() + "." + currentDate.getMonth() + "." + currentDate.getYear() % 100);
-        shouldUpdateInvoiceController = true;
+        shouldUpdateInvoiceController.replace(companyName, true);
         return serial + "-" + currentYear2Digits + "-" + number;
     }
 
