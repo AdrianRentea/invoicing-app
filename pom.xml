@@ -14,7 +14,7 @@
 	<name>generate-invoice</name>
 	<description> Project used for automatic invoice generator</description>
 	<properties>
-		<java.version>11</java.version>
+		<java.version>17</java.version>
 	</properties>
 
 	<dependencies>
