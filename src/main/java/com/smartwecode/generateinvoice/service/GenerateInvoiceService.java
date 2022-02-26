@@ -3,7 +3,9 @@ package com.smartwecode.generateinvoice.service;
 import com.aspose.cells.PdfSaveOptions;
 import com.smartwecode.generateinvoice.dto.Company;
 import com.smartwecode.generateinvoice.dto.Customer;
+import com.smartwecode.generateinvoice.dto.EmailDetails;
 import com.smartwecode.generateinvoice.dto.Supplier;
+import com.smartwecode.generateinvoice.utils.Mailer;
 import com.smartwecode.generateinvoice.utils.TrackExecutionTime;
 import com.smartwecode.generateinvoice.utils.excel.ExcelSheetDescriptor;
 import com.smartwecode.generateinvoice.utils.excel.ExcelUtils;
@@ -12,6 +14,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -26,10 +29,15 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
 public class GenerateInvoiceService {
+    private final Map<String, Workbook> currentSupplierInvoiceController = new HashMap<>();
+    private final Map<String, Boolean> shouldUpdateInvoiceController = new ConcurrentHashMap<>();
+    @Autowired
+    Mailer mailer;
     @Value("${directoryPath}")
     private String directoryPath;
     @Value("${invoiceTemplate}")
@@ -37,20 +45,12 @@ public class GenerateInvoiceService {
     @Value("${invoiceControllerFileName}")
     private String invoiceControllerFileName;
 
-    private Map<String, Workbook> currentSupplierInvoiceController = new HashMap<>();
-
-    private Map<String, Boolean> shouldUpdateInvoiceController = new HashMap<>();
-
     @SneakyThrows
     @TrackExecutionTime
     public void generateInvoices() {
 
         getSupplierList().parallelStream()
-                .map(company -> {
-                    generateCompanyInvoices(company);
-                    return null;
-                })
-                .filter(Objects::nonNull).collect(Collectors.toUnmodifiableList());
+                .forEach(this::generateCompanyInvoices);
     }
 
     @SneakyThrows
@@ -99,9 +99,7 @@ public class GenerateInvoiceService {
 
         shouldUpdateInvoiceController.put(companyData.getName(), false);
 
-        for (Customer customer : companyData.getCustomerList()) {
-            generateInvoiceForCompanyCustomer(companyData.getName(), companyData.getSupplier(), customer);
-        }
+        companyData.getCustomerList().forEach(customer -> generateInvoiceForCompanyCustomer(companyData.getName(), companyData.getSupplier(), customer));
 
         saveInvoiceControllerForCompany(companyData.getName());
         // just a bit a memory management,
@@ -117,7 +115,7 @@ public class GenerateInvoiceService {
 
             try {
                 Workbook wb = updateInvoice(companyName, supplier, customer);
-                saveInvoice(companyName, customer, wb);
+                saveInvoice(supplier, companyName, customer, wb);
 
             } catch (IOException e) {
                 // if the invoice generation failed, we need to remove
@@ -137,7 +135,7 @@ public class GenerateInvoiceService {
         return wb;
     }
 
-    private void saveInvoice(String companyName, Customer customer, Workbook wb) throws IOException {
+    private void saveInvoice(Supplier supplier, String companyName, Customer customer, Workbook wb) throws IOException {
         String filePath = getInvoicePathAndName(companyName, customer.getName());
         createDirectoriesInPathIfNotExists(getInvoicePath(companyName));
         FileOutputStream outputStream = new FileOutputStream(filePath + ".xlsx");
@@ -145,21 +143,32 @@ public class GenerateInvoiceService {
         wb.write(outputStream);
         wb.close();
         System.out.println("invoice " + filePath + ".xlsx" + " was saved on disk!");
-        saveInvoiceAsPDF(filePath);
-    }
 
-    private void saveInvoiceAsPDF(String filePath) {
         try {
-            com.aspose.cells.Workbook workbook = new com.aspose.cells.Workbook(filePath + ".xlsx");
-            PdfSaveOptions options = new PdfSaveOptions();
-            options.setOnePagePerSheet(true);
-            options.setCalculateFormula(true);
-            workbook.save(filePath + ".pdf", options);
-            System.out.println("invoice " + filePath + ".pdf" + " was saved on disk!");
-
+            String pdfFilePath = saveInvoiceAsPDF(filePath);
+            emailInvoice(supplier, companyName, customer, pdfFilePath);
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private void emailInvoice(Supplier supplier, String companyName, Customer customer, String pdfFilePath) {
+        EmailDetails emailDetails = new EmailDetails(supplier.getEmail(), customer.getEmail(), "Factura " + companyName, "Buna ziua, <br/> \\r\\n\\r\\n" +
+                " Va trimit atasata factura pentru luna anterioara." +
+                "Cu stima, <br/> \\r\\n\\r\\n" +
+                "Echipa SmartWeCode <br/> \\r\\n\\r\\n", pdfFilePath);
+
+        mailer.send(emailDetails);
+    }
+
+    private String saveInvoiceAsPDF(String filePath) throws Exception {
+        com.aspose.cells.Workbook workbook = new com.aspose.cells.Workbook(filePath + ".xlsx");
+        PdfSaveOptions options = new PdfSaveOptions();
+        options.setOnePagePerSheet(true);
+        options.setCalculateFormula(true);
+        workbook.save(filePath + ".pdf", options);
+        System.out.println("invoice " + filePath + ".pdf" + " was saved on disk!");
+        return filePath + ".pdf";
     }
 
     /*
@@ -290,11 +299,11 @@ public class GenerateInvoiceService {
         int previousGeneratedInvoiceNumber = (int) sheet.getRow(rowIndex).getCell(2).getNumericCellValue();
         int previousGeneratedInvoiceYear = (int) sheet.getRow(rowIndex).getCell(1).getNumericCellValue();
         int nextNumberForGeneratedInvoice = 1;
-        if(Integer.parseInt(currentYear2Digits) == previousGeneratedInvoiceYear){
-            nextNumberForGeneratedInvoice = previousGeneratedInvoiceYear + 1;
+        if (Integer.parseInt(currentYear2Digits) == previousGeneratedInvoiceYear) {
+            nextNumberForGeneratedInvoice = previousGeneratedInvoiceNumber + 1;
         }
         sheet.createRow(++rowIndex).createCell(0).setCellValue(serial);
-        sheet.getRow(rowIndex).createCell(1).setCellValue(currentYear2Digits);
+        sheet.getRow(rowIndex).createCell(1).setCellValue(Integer.parseInt(currentYear2Digits));
         sheet.getRow(rowIndex).createCell(2).setCellValue(nextNumberForGeneratedInvoice);
         sheet.getRow(rowIndex).createCell(3).setCellValue(currentDate.getDayOfMonth() + "." + currentDate.getMonth() + "." + currentDate.getYear() % 100);
         shouldUpdateInvoiceController.replace(companyName, true);

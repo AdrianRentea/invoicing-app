@@ -9,4 +9,6 @@ import lombok.ToString;
 public class Customer extends Collaborator{
     @ExcelCellInfo(index = 6)
     private Integer amount;
+    @ExcelCellInfo(index = 7)
+    private String email;
 }

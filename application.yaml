@@ -1,0 +1,17 @@
+cron:
+  frequency: 0,5,10,15,20,25,30,35,40,45,50,55  * * * * ?
+invoiceSuffixDateFormat: MMYYYY
+directoryPath: /suppliers/
+invoiceTemplate: /suppliers/Template invoice_test- 022021.xlsx
+invoiceControllerFileName: invoice controller.xlsx
+
+aspect:
+  enabled: true
+
+server:
+  port: 7991
+
+email:
+  from:
+    user: someGmailAddress@gmail.com
+    password: your generated email password
