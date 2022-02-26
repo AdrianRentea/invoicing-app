@@ -287,13 +287,18 @@ public class GenerateInvoiceService {
         int rowIndex = getLastIndexWithNotEmptyData(sheet);
 
         String serial = sheet.getRow(rowIndex).getCell(0).getStringCellValue();
-        int number = (int) sheet.getRow(rowIndex).getCell(2).getNumericCellValue();
+        int previousGeneratedInvoiceNumber = (int) sheet.getRow(rowIndex).getCell(2).getNumericCellValue();
+        int previousGeneratedInvoiceYear = (int) sheet.getRow(rowIndex).getCell(1).getNumericCellValue();
+        int nextNumberForGeneratedInvoice = 1;
+        if(Integer.parseInt(currentYear2Digits) == previousGeneratedInvoiceYear){
+            nextNumberForGeneratedInvoice = previousGeneratedInvoiceYear + 1;
+        }
         sheet.createRow(++rowIndex).createCell(0).setCellValue(serial);
         sheet.getRow(rowIndex).createCell(1).setCellValue(currentYear2Digits);
-        sheet.getRow(rowIndex).createCell(2).setCellValue(++number);
+        sheet.getRow(rowIndex).createCell(2).setCellValue(nextNumberForGeneratedInvoice);
         sheet.getRow(rowIndex).createCell(3).setCellValue(currentDate.getDayOfMonth() + "." + currentDate.getMonth() + "." + currentDate.getYear() % 100);
         shouldUpdateInvoiceController.replace(companyName, true);
-        return serial + "-" + currentYear2Digits + "-" + number;
+        return serial + "-" + currentYear2Digits + "-" + nextNumberForGeneratedInvoice;
     }
 
     private int getLastIndexWithNotEmptyData(Sheet sheet) {
